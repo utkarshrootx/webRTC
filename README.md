@@ -20,5 +20,3 @@ This is a **WebRTC-based video calling application** built using **React Native*
 - **Zustand** (State Management)
 - **Flipper** (Performance Profiling)
 - **Expo** (React Native Toolchain)
-
-## 📂 Project Structure
