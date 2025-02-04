@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useEffect, useRef, useCallback } from "react";
 import { View, Button, StyleSheet, Platform, Text } from "react-native";
 import {
   DarkTheme,
@@ -11,8 +11,10 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import "react-native-reanimated";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { useDispatch, useSelector } from "react-redux";
+import { setLocalStream, setError } from "../store/videoCallSlice";
+import { PerfMonitor } from "react-native-flipper-performance-monitor";
 
-// Conditionally import WebRTC only for mobile
 let mediaDevices, RTCPeerConnection, RTCSessionDescription, RTCView;
 if (Platform.OS !== "web") {
   const WebRTC = require("react-native-webrtc");
@@ -29,8 +31,9 @@ const configuration = {
 };
 
 const WebRTCClient = () => {
-  const [localStream, setLocalStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(null);
+  const dispatch = useDispatch();
+  const localStream = useSelector((state) => state.videoCall.localStream);
+  const remoteStream = useSelector((state) => state.videoCall.remoteStream);
   const peerConnection = useRef(
     Platform.OS !== "web" ? new RTCPeerConnection(configuration) : null
   ).current;
@@ -42,6 +45,8 @@ const WebRTCClient = () => {
 
   useEffect(() => {
     startLocalStream();
+    PerfMonitor.start();
+    return () => PerfMonitor.stop();
   }, []);
 
   useEffect(() => {
@@ -54,7 +59,7 @@ const WebRTCClient = () => {
     return null;
   }
 
-  const startLocalStream = async () => {
+  const startLocalStream = useCallback(async () => {
     try {
       let stream;
       if (Platform.OS === "web") {
@@ -65,13 +70,13 @@ const WebRTCClient = () => {
       } else {
         stream = await mediaDevices.getUserMedia({ video: true, audio: true });
       }
-      setLocalStream(stream);
+      dispatch(setLocalStream(stream));
     } catch (error) {
-      console.error("Error accessing media devices:", error);
+      dispatch(setError(error.message));
     }
-  };
+  }, [dispatch]);
 
-  const createOffer = async () => {
+  const createOffer = useCallback(async () => {
     if (Platform.OS === "web") {
       console.log("WebRTC not yet implemented for web");
     } else {
@@ -84,7 +89,7 @@ const WebRTCClient = () => {
       );
       console.log("Offer Created:", offer);
     }
-  };
+  }, [peerConnection]);
 
   return (
     <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
