@@ -1,133 +1,91 @@
-import React, { useEffect, useRef, useCallback } from "react";
-import { View, Button, StyleSheet, Platform, Text } from "react-native";
-import {
-  DarkTheme,
-  DefaultTheme,
-  ThemeProvider,
-} from "@react-navigation/native";
-import { useFonts } from "expo-font";
-import { Stack } from "expo-router";
-import * as SplashScreen from "expo-splash-screen";
-import { StatusBar } from "expo-status-bar";
-import "react-native-reanimated";
-import { useColorScheme } from "@/hooks/useColorScheme";
-import { useDispatch, useSelector } from "react-redux";
+import React from "react";
+import { render, fireEvent, waitFor } from "@testing-library/react-native";
+import { Provider } from "react-redux";
+import configureStore from "redux-mock-store";
+import WebRTCClient from "../components/WebRTCClient"; // Adjust path if needed
 import { setLocalStream, setError } from "../store/videoCallSlice";
-import { PerfMonitor } from "react-native-flipper-performance-monitor";
 
-let mediaDevices, RTCPeerConnection, RTCSessionDescription, RTCView;
-if (Platform.OS !== "web") {
-  const WebRTC = require("react-native-webrtc");
-  mediaDevices = WebRTC.mediaDevices;
-  RTCPeerConnection = WebRTC.RTCPeerConnection;
-  RTCSessionDescription = WebRTC.RTCSessionDescription;
-  RTCView = WebRTC.RTCView;
-}
+jest.mock("react-native-webrtc", () => ({
+  mediaDevices: {
+    getUserMedia: jest.fn(() =>
+      Promise.resolve({
+        toURL: jest.fn(() => "mock-stream-url"),
+      })
+    ),
+  },
+  RTCPeerConnection: jest.fn(() => ({
+    createOffer: jest.fn(() =>
+      Promise.resolve({ type: "offer", sdp: "mock-sdp" })
+    ),
+    setLocalDescription: jest.fn(),
+  })),
+  RTCSessionDescription: jest.fn(),
+  RTCView: jest.fn(() => null),
+}));
 
-SplashScreen.preventAutoHideAsync();
+jest.mock("expo-font", () => ({
+  useFonts: () => [true],
+}));
 
-const configuration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-};
+jest.mock("@react-navigation/native", () => ({
+  ThemeProvider: ({ children }) => children,
+  DarkTheme: {},
+  DefaultTheme: {},
+}));
 
-const WebRTCClient = () => {
-  const dispatch = useDispatch();
-  const localStream = useSelector((state) => state.videoCall.localStream);
-  const remoteStream = useSelector((state) => state.videoCall.remoteStream);
-  const peerConnection = useRef(
-    Platform.OS !== "web" ? new RTCPeerConnection(configuration) : null
-  ).current;
-  const colorScheme = useColorScheme() ?? "light";
+const mockStore = configureStore([]);
 
-  const [loaded] = useFonts({
-    SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
+describe("WebRTCClient Component", () => {
+  let store;
+
+  beforeEach(() => {
+    store = mockStore({
+      videoCall: { localStream: null, remoteStream: null },
+    });
+    store.dispatch = jest.fn();
   });
 
-  useEffect(() => {
-    startLocalStream();
-    PerfMonitor.start();
-    return () => PerfMonitor.stop();
-  }, []);
+  it("renders correctly", () => {
+    const { getByText } = render(
+      <Provider store={store}>
+        <WebRTCClient />
+      </Provider>
+    );
 
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
+    expect(getByText("Start Call")).toBeTruthy();
+  });
 
-  if (!loaded) {
-    return null;
-  }
+  it("dispatches setLocalStream when stream starts", async () => {
+    const { getByText } = render(
+      <Provider store={store}>
+        <WebRTCClient />
+      </Provider>
+    );
 
-  const startLocalStream = useCallback(async () => {
-    try {
-      let stream;
-      if (Platform.OS === "web") {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        });
-      } else {
-        stream = await mediaDevices.getUserMedia({ video: true, audio: true });
-      }
-      dispatch(setLocalStream(stream));
-    } catch (error) {
-      dispatch(setError(error.message));
-    }
-  }, [dispatch]);
+    fireEvent.press(getByText("Start Call"));
 
-  const createOffer = useCallback(async () => {
-    if (Platform.OS === "web") {
-      console.log("WebRTC not yet implemented for web");
-    } else {
-      const offer = await peerConnection.createOffer({
-        offerToReceiveVideo: true,
-        offerToReceiveAudio: true,
-      });
-      await peerConnection.setLocalDescription(
-        new RTCSessionDescription(offer)
+    await waitFor(() => {
+      expect(store.dispatch).toHaveBeenCalledWith(
+        setLocalStream(expect.any(Object))
       );
-      console.log("Offer Created:", offer);
-    }
-  }, [peerConnection]);
+    });
+  });
 
-  return (
-    <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="+not-found" />
-      </Stack>
-      <StatusBar style="auto" />
-      <View style={styles.container}>
-        {localStream && Platform.OS === "web" && (
-          <video
-            autoPlay
-            playsInline
-            ref={(video) => video && (video.srcObject = localStream)}
-            style={styles.video}
-          />
-        )}
-        {localStream && Platform.OS !== "web" && (
-          <RTCView streamURL={localStream.toURL()} style={styles.video} />
-        )}
-        <Button title="Start Call" onPress={createOffer} />
-      </View>
-    </ThemeProvider>
-  );
-};
+  it("handles error when getUserMedia fails", async () => {
+    require("react-native-webrtc").mediaDevices.getUserMedia.mockRejectedValueOnce(
+      new Error("Permission denied")
+    );
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  video: {
-    width: 200,
-    height: 200,
-    backgroundColor: "black",
-    margin: 10,
-  },
+    render(
+      <Provider store={store}>
+        <WebRTCClient />
+      </Provider>
+    );
+
+    await waitFor(() => {
+      expect(store.dispatch).toHaveBeenCalledWith(
+        setError("Permission denied")
+      );
+    });
+  });
 });
-
-export default WebRTCClient;
